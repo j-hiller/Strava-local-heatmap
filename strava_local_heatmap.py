@@ -162,10 +162,19 @@ def get_lat_lon_from_fit(fit_dir, fit_year, fit_glob, verbose=False):
             if new_file.suffix == '.gpx':
                 print('Need to implement gpx')
             elif new_file.suffix == '.fit':
+                checked = False
+                if fit_year == 'all':
+                    checked=True
                 with fitdecode.FitReader(new_file) as fit:
                     for frame in fit:
                         if isinstance(frame, fitdecode.FitDataMessage):
                             if frame.name == 'record':
+                                if not checked:
+                                    if frame.get_value('timestamp').year != fit_year:
+                                        if verbose:
+                                            print('Breaking because {} doesn''t match required year {}'.format(frame.get_value('timestamp').year, fit_year))
+                                        break
+                                    checked = True
                                 if (frame.has_field('position_lat') 
                                     and frame.has_field('position_long')):
                                     try:
@@ -219,7 +228,7 @@ def main(args):
 
     if fit:
         # Extract lat lon from FIT files
-        fit_lat_lon, nr_fit_files = get_lat_lon_from_fit(fit_dir, year, fit_glob)
+        fit_lat_lon, nr_fit_files = get_lat_lon_from_fit(fit_dir, int(year), fit_glob, verbose=True)
         print('Extracted {} values from FIT files in {} files'.format(len(fit_lat_lon), nr_fit_files))
     else:
         fit_lat_lon = []
