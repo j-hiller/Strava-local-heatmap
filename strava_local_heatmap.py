@@ -26,6 +26,8 @@ import time
 import argparse
 import urllib.error
 import urllib.request
+import fitdecode
+from pathlib import Path
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -107,15 +109,13 @@ def download_tile(tile_url, tile_file): # download image from url to file
 
 
 def get_lat_lon_from_gpx(gpx_dir, gpx_year='all', gpx_glob='.gpx'):
+    # Create empty list for data
     lat_lon_data = []
     # find GPX files
     gpx_files = glob.glob(gpx_dir+'/'+gpx_glob)
 
     if not gpx_files:
         print('WARNING no data matching '+gpx_dir+'/'+gpx_glob)
-
-    # read GPX files
-    lat_lon_data = [] # initialize latitude, longitude list
 
     for i in range(len(gpx_files)):
         print('reading GPX file '+str(i+1)+'/'+str(len(gpx_files))+'...')
@@ -135,19 +135,22 @@ def get_lat_lon_from_gpx(gpx_dir, gpx_year='all', gpx_glob='.gpx'):
 
 
 def get_lat_lon_from_fit(fit_dir, fit_year, fit_glob):
+    # Create empty list for data
     lat_lon_data = []
     # find FIT files
     fit_files = glob.glob(fit_dir + '/' + fit_glob)
 
     if not fit_files:
-        print('WARNING no data matching ' +fit_dir + '/' + fit_glob)
+        print('WARNING no data matching ' + fit_dir + '/' + fit_glob)
+
+    
 
     return lat_lon_data, len(fit_files)
 
 
 def main(args):
     # parameters
-    gpx_dir = args.dir # string
+    data_dir = args.dir # string
     gpx_glob = args.glob # string
     gpx_year = args.year # string
     fit_dir = args.fit_dir
@@ -337,16 +340,15 @@ def main(args):
 
 if __name__ == '__main__':
     # command line parameters
-    parser = argparse.ArgumentParser(description = 'Generate a local heatmap from Strava GPX files', epilog = 'Report issues to https://github.com/remisalmon/strava-local-heatmap')
+    parser = argparse.ArgumentParser(description = 'Generate a local heatmap from a Strava data export', epilog = 'Report issues to https://github.com/j-hiller/strava-local-heatmap')
 
-    parser.add_argument('--gpx-dir', dest = 'dir', default = 'gpx', help = 'GPX files directory  (default: gpx)')
-    parser.add_argument('--gpx-year', dest = 'year', default = 'all', help = 'GPX files year filter (default: all)')
+    parser.add_argument('--data-dir', dest = 'dir', default = 'data', type=Path,  help = 'Data directory that contains the Strava export  (default: data)')
     parser.add_argument('--gpx-filter', dest = 'glob', default = '*.gpx', help = 'GPX files glob filter (default: *.gpx)')
-    parser.add_argument('--gpx-bound', dest = 'bound', type = float, nargs = 4, default = [-90, +90, -180, +180], help = 'heatmap bounding box coordinates as lat_min, lat_max, lon_min, lon_max (default: -90 +90 -180 +180)')
-    parser.add_argument('--fit-dir', dest='fit_dir', default='fit', help='FIT files directory (default: fit)')
-    parser.add_argument('--fit-year', dest='fit_year', default='all', help='FIT files year filter (default: all)')
+    parser.add_argument('--year', dest='year', default='all', help='Files year filter (default: all)')
     parser.add_argument('--fit-filter', dest='fit_glob', default='*.fit.gz', help='FIT files glob filter (default: *.fit.gz (as in the Strava exports)')
-    parser.add_argument('--fit-bound', dest='fit_bound', type=float, nargs=4, default=[-90, +90, -180, +180], help='heatmap bounding box coordinates as lat_min, lat_max, lon_min, lon_max (default: -90 +90 -180 +180)')
+    parser.add_argument('--bound', dest='bound', type=float, nargs=4, default=[-90, +90, -180, +180], help='heatmap bounding box coordinates as lat_min, lat_max, lon_min, lon_max (default: -90 +90 -180 +180)')
+    parser.add_argument('--no-gpx', dest='gpx', action='store_false', help='Whether to ignore GPX files in the export')
+    parser.add_argument('--no-fit', dest='fit', action='store_false', help='Whether to ignore FIT files in the export')
     parser.add_argument('--output', dest = 'file', default = 'heatmap.png', help = 'heatmap name (default: heatmap.png)')
     parser.add_argument('--zoom', dest = 'zoom', type = int, default = 10, help = 'heatmap zoom level 0-19 (default: 10)')
     parser.add_argument('--sigma', dest = 'sigma', type = int, default = 1, help = 'heatmap Gaussian kernel sigma in pixels (default: 1)')
