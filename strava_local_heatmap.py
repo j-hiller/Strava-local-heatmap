@@ -28,6 +28,7 @@ import urllib.error
 import urllib.request
 import fitdecode
 from pathlib import Path
+import gzip
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -67,6 +68,13 @@ def deg2xy(lat_deg, lon_deg, zoom): # return OSM global x,y coordinates from lat
     y = (1.0 - np.log(np.tan(lat_rad) + (1 / np.cos(lat_rad))) / np.pi) / 2.0 * n
 
     return(x, y)
+
+
+def sc2deg(sc_value):
+    """
+    Convert semicircle values to degrees
+    """
+    return np.float(sc_value) * 180 / 2**31
 
 
 def box_filter(image, w_box): # return image filtered with box filter
@@ -112,15 +120,15 @@ def get_lat_lon_from_gpx(gpx_dir, gpx_year='all', gpx_glob='.gpx'):
     # Create empty list for data
     lat_lon_data = []
     # find GPX files
-    gpx_files = glob.glob(gpx_dir+'/'+gpx_glob)
+    gpx_files = glob.glob(str(gpx_dir)+'/'+gpx_glob)
 
     if not gpx_files:
         print('WARNING no data matching '+gpx_dir+'/'+gpx_glob)
 
-    for i in range(len(gpx_files)):
+    for i, gpx_file in enumerate(gpx_files):
         print('reading GPX file '+str(i+1)+'/'+str(len(gpx_files))+'...')
 
-        with open(gpx_files[i], encoding='utf-8') as file:
+        with open(gpx_file, encoding='utf-8') as file:
             for line in file:
                 if '<time' in line: # activity date
                     tmp = re.findall('[0-9]{4}', line)
@@ -134,17 +142,43 @@ def get_lat_lon_from_gpx(gpx_dir, gpx_year='all', gpx_glob='.gpx'):
     return lat_lon_data, len(gpx_files)
 
 
-def get_lat_lon_from_fit(fit_dir, fit_year, fit_glob):
+def get_lat_lon_from_fit(fit_dir, fit_year, fit_glob, verbose=False):
     # Create empty list for data
     lat_lon_data = []
     # find FIT files
-    fit_files = glob.glob(fit_dir + '/' + fit_glob)
+    fit_files = glob.glob(str(fit_dir) + '/' + fit_glob)
 
     if not fit_files:
         print('WARNING no data matching ' + fit_dir + '/' + fit_glob)
 
-    
-
+    for i, fit_file in enumerate(fit_files):
+        print('extracting and reading FIT file ' + str(i+1) + '/' + str(len(fit_files)) + '...')
+        ff = Path(fit_file)
+        if ff.suffix == '.gz':
+            new_file = ff.absolute().parent.joinpath(ff.stem)
+            with gzip.open(ff.absolute(), 'rb') as gzip_file:
+                with open(ff.absolute().parent.joinpath(ff.stem), 'wb') as f:
+                    f.write(gzip_file.read())
+            if new_file.suffix == '.gpx':
+                print('Need to implement gpx')
+            elif new_file.suffix == '.fit':
+                with fitdecode.FitReader(new_file) as fit:
+                    for frame in fit:
+                        if isinstance(frame, fitdecode.FitDataMessage):
+                            if frame.name == 'record':
+                                if (frame.has_field('position_lat') 
+                                    and frame.has_field('position_long')):
+                                    try:
+                                        lat_lon_data.append([
+                                            sc2deg(frame.get_value('position_lat')),
+                                            sc2deg(frame.get_value('position_long'))
+                                        ])
+                                    except TypeError:
+                                        if verbose:
+                                            print('Had the following values {}, {} at {}'.format(
+                                                frame.get_value('position_lat'), frame.get_value('position_long'),
+                                                frame.get_value('timestamp')))
+            new_file.unlink()
     return lat_lon_data, len(fit_files)
 
 
@@ -152,16 +186,19 @@ def main(args):
     # parameters
     data_dir = args.dir # string
     gpx_glob = args.glob # string
-    gpx_year = args.year # string
-    fit_dir = args.fit_dir
+    year = args.year # string
     fit_glob = args.fit_glob
-    fit_year = args.fit_year
+    fit = args.fit
+    gpx = args.gpx
     lat_bound_min, lat_bound_max, lon_bound_min, lon_bound_max = args.bound # int
     heatmap_file = args.file # string
     heatmap_zoom = args.zoom # int
     sigma_pixels = args.sigma # int
     use_csv = args.csv # bool
     use_cumululative_distribution = not args.nocdist # bool
+
+    gpx_dir = data_dir.joinpath('activities')
+    fit_dir = data_dir.joinpath('activities')
 
     if heatmap_zoom > OSM_MAX_ZOOM:
         heatmap_zoom = OSM_MAX_ZOOM
@@ -178,10 +215,16 @@ def main(args):
     lat_lon_data = [] # initialize latitude, longitude list
 
     # Extract lat lon from GPX file
-    gpx_lat_lon, nr_gpx_files = get_lat_lon_from_gpx(gpx_dir, gpx_year, gpx_glob)
+    gpx_lat_lon, nr_gpx_files = get_lat_lon_from_gpx(gpx_dir, year, gpx_glob)
 
-    # Extract lat lon from FIT files
-    fit_lat_lon, nr_fit_files = get_lat_lon_from_fit(fit_dir, fit_year, fit_glob)
+    if fit:
+        # Extract lat lon from FIT files
+        fit_lat_lon, nr_fit_files = get_lat_lon_from_fit(fit_dir, year, fit_glob)
+        print('Extracted {} values from FIT files in {} files'.format(len(fit_lat_lon), nr_fit_files))
+    else:
+        fit_lat_lon = []
+        nr_fit_files = 0
+
 
     nr_activities = nr_gpx_files + nr_fit_files
     lat_lon_data.extend(gpx_lat_lon)
