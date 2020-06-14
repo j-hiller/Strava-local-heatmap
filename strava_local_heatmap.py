@@ -27,6 +27,7 @@ import argparse
 import urllib.error
 import urllib.request
 import fitdecode
+import gpxpy
 from pathlib import Path
 import gzip
 
@@ -116,7 +117,7 @@ def download_tile(tile_url, tile_file): # download image from url to file
     return(status)
 
 
-def get_lat_lon_from_gpx(gpx_dir, gpx_year='all', gpx_glob='.gpx'):
+def get_lat_lon_from_gpx(gpx_dir, gpx_year='all', gpx_month='all', gpx_glob='.gpx', verbose=False):
     # Create empty list for data
     lat_lon_data = []
     # find GPX files
@@ -129,20 +130,23 @@ def get_lat_lon_from_gpx(gpx_dir, gpx_year='all', gpx_glob='.gpx'):
         print('reading GPX file '+str(i+1)+'/'+str(len(gpx_files))+'...')
 
         with open(gpx_file, encoding='utf-8') as file:
-            for line in file:
-                if '<time' in line: # activity date
-                    tmp = re.findall('[0-9]{4}', line)
-                    if gpx_year in [tmp[0], 'all']:
-                        for line in file:
-                            if '<trkpt' in line: # trackpoint latitude, longitude
-                                tmp = re.findall('-?[0-9]*[.]?[0-9]+', line)
-                                lat_lon_data.append([float(tmp[0]), float(tmp[1])])
-                    else:
-                        break
+            gpx_p = gpxpy.parse(file)
+            if gpx_year != 'all' and gpx_p.time.year != int(gpx_year):
+                if verbose:
+                    print('Breaking because {} doesn''t match required year {}'.format(gpx_p.time.year, gpx_year))
+                continue
+            if gpx_month != 'all' and gpx_p.time.month != int(gpx_month):
+                if verbose:
+                    print('Breaking because {} doesn''t match required month {}'.format(gpx_p.time.month, gpx_month))
+                continue
+            for track in gpx_p.tracks:
+                for segment in track.segments:
+                    for point in segment.points:
+                        lat_lon_data.append([point.latitude, point.longitude])
     return lat_lon_data, len(gpx_files)
 
 
-def get_lat_lon_from_fit(fit_dir, fit_year, fit_glob, verbose=False):
+def get_lat_lon_from_fit(fit_dir, fit_year, fit_month, fit_glob, verbose=False):
     # Create empty list for data
     lat_lon_data = []
     # find FIT files
@@ -162,19 +166,28 @@ def get_lat_lon_from_fit(fit_dir, fit_year, fit_glob, verbose=False):
             if new_file.suffix == '.gpx':
                 print('Need to implement gpx')
             elif new_file.suffix == '.fit':
-                checked = False
+                year_checked = False
                 if fit_year == 'all':
-                    checked=True
+                    year_checked = True
+                month_checked = False
+                if fit_month == 'all':
+                    month_checked = True
                 with fitdecode.FitReader(new_file) as fit:
                     for frame in fit:
                         if isinstance(frame, fitdecode.FitDataMessage):
                             if frame.name == 'record':
-                                if not checked:
-                                    if frame.get_value('timestamp').year != fit_year:
+                                if not year_checked:
+                                    if frame.get_value('timestamp').year != int(fit_year):
                                         if verbose:
                                             print('Breaking because {} doesn''t match required year {}'.format(frame.get_value('timestamp').year, fit_year))
                                         break
-                                    checked = True
+                                    year_checked = True
+                                if not month_checked:
+                                    if frame.get_value('timestamp').month != int(fit_month):
+                                        if verbose:
+                                            print('Breaking because {} doesn''t match required month {}'.format(frame.get_value('timestamp').month, fit_month))
+                                        break
+                                    month_checked = True
                                 if (frame.has_field('position_lat') 
                                     and frame.has_field('position_long')):
                                     try:
@@ -196,6 +209,7 @@ def main(args):
     data_dir = args.dir # string
     gpx_glob = args.glob # string
     year = args.year # string
+    month = args.month
     fit_glob = args.fit_glob
     fit = args.fit
     gpx = args.gpx
@@ -224,11 +238,11 @@ def main(args):
     lat_lon_data = [] # initialize latitude, longitude list
 
     # Extract lat lon from GPX file
-    gpx_lat_lon, nr_gpx_files = get_lat_lon_from_gpx(gpx_dir, year, gpx_glob)
+    gpx_lat_lon, nr_gpx_files = get_lat_lon_from_gpx(gpx_dir, year, month, gpx_glob)
 
     if fit:
         # Extract lat lon from FIT files
-        fit_lat_lon, nr_fit_files = get_lat_lon_from_fit(fit_dir, int(year), fit_glob, verbose=True)
+        fit_lat_lon, nr_fit_files = get_lat_lon_from_fit(fit_dir, year, month, fit_glob, verbose=True)
         print('Extracted {} values from FIT files in {} files'.format(len(fit_lat_lon), nr_fit_files))
     else:
         fit_lat_lon = []
@@ -361,9 +375,10 @@ def main(args):
     for c in range(3):
         supertile_overlay[:, :, c] = (1.0-data_color[:, :, c])*supertile[:, :, c]+data_color[:, :, c] # fill color overlay
 
-    # save image
-    if not os.path.splitext(heatmap_file)[1] == '.png': # make sure we use PNG
-        heatmap_file = os.path.splitext(heatmap_file)[0]+'.png'
+    # # save image
+    # if not os.path.splitext(heatmap_file)[1] == '.png': # make sure we use PNG
+    #     heatmap_file = os.path.splitext(heatmap_file)[0]+'.png'
+    heatmap_file = heatmap_file + '_' + str(year) + '_' + str(month) + '.png'
 
     print('saving '+heatmap_file+'...')
 
@@ -396,12 +411,13 @@ if __name__ == '__main__':
 
     parser.add_argument('--data-dir', dest = 'dir', default = 'data', type=Path,  help = 'Data directory that contains the Strava export  (default: data)')
     parser.add_argument('--gpx-filter', dest = 'glob', default = '*.gpx', help = 'GPX files glob filter (default: *.gpx)')
-    parser.add_argument('--year', dest='year', default='all', help='Files year filter (default: all)')
+    parser.add_argument('--year', dest='year', default='all', help='Files year filter, coded as four digits, e.g. 2020 (default: all)')
+    parser.add_argument('--month', dest='month', default='all', help='Files month filter coded as number, e.g. 4 for April (default: all)')
     parser.add_argument('--fit-filter', dest='fit_glob', default='*.fit.gz', help='FIT files glob filter (default: *.fit.gz (as in the Strava exports)')
     parser.add_argument('--bound', dest='bound', type=float, nargs=4, default=[-90, +90, -180, +180], help='heatmap bounding box coordinates as lat_min, lat_max, lon_min, lon_max (default: -90 +90 -180 +180)')
     parser.add_argument('--no-gpx', dest='gpx', action='store_false', help='Whether to ignore GPX files in the export')
     parser.add_argument('--no-fit', dest='fit', action='store_false', help='Whether to ignore FIT files in the export')
-    parser.add_argument('--output', dest = 'file', default = 'heatmap.png', help = 'heatmap name (default: heatmap.png)')
+    parser.add_argument('--output', dest = 'file', default = 'heatmap', help = 'heatmap name. .png and year and month will be added (default: heatmap)')
     parser.add_argument('--zoom', dest = 'zoom', type = int, default = 10, help = 'heatmap zoom level 0-19 (default: 10)')
     parser.add_argument('--sigma', dest = 'sigma', type = int, default = 1, help = 'heatmap Gaussian kernel sigma in pixels (default: 1)')
     parser.add_argument('--no-cdist', dest = 'nocdist', action = 'store_true', help = 'disable cumulative distribution of trackpoints (uniform distribution)')
