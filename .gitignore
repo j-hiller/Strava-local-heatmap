@@ -1,3 +1,5 @@
 gpx/*.gpx
 tiles/*.png
 virtualenv
+venv
+*.png
