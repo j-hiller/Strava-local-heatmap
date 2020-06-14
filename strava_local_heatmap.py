@@ -135,7 +135,7 @@ def main(args):
     for i in range(len(gpx_files)):
         print('reading GPX file '+str(i+1)+'/'+str(len(gpx_files))+'...')
 
-        with open(gpx_files[i]) as file:
+        with open(gpx_files[i], encoding='utf-8') as file:
             for line in file:
                 if '<time' in line: # activity date
                     tmp = re.findall('[0-9]{4}', line)
