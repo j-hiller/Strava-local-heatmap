@@ -38,6 +38,7 @@ MAX_TILE_COUNT = 100 # maximum number of OSM tiles to download
 OSM_TILE_SIZE = 256 # OSM tile size in pixels
 OSM_MAX_ZOOM = 19 # OSM max zoom level
 
+
 # functions
 def deg2num(lat_deg, lon_deg, zoom): # return OSM tile x,y from lat,lon in degrees (from https://wiki.openstreetmap.org/wiki/Slippy_map_tilenames)
   lat_rad = np.radians(lat_deg)
@@ -47,6 +48,7 @@ def deg2num(lat_deg, lon_deg, zoom): # return OSM tile x,y from lat,lon in degre
 
   return(xtile, ytile)
 
+
 def num2deg(xtile, ytile, zoom): # return lat,lon in degrees from OSM tile x,y (from https://wiki.openstreetmap.org/wiki/Slippy_map_tilenames)
   n = 2.0 ** zoom
   lon_deg = xtile / n * 360.0 - 180.0
@@ -55,6 +57,7 @@ def num2deg(xtile, ytile, zoom): # return lat,lon in degrees from OSM tile x,y (
 
   return(lat_deg, lon_deg)
 
+
 def deg2xy(lat_deg, lon_deg, zoom): # return OSM global x,y coordinates from lat,lon in degrees
     lat_rad = np.radians(lat_deg)
     n = 2.0 ** zoom
@@ -62,6 +65,7 @@ def deg2xy(lat_deg, lon_deg, zoom): # return OSM global x,y coordinates from lat
     y = (1.0 - np.log(np.tan(lat_rad) + (1 / np.cos(lat_rad))) / np.pi) / 2.0 * n
 
     return(x, y)
+
 
 def box_filter(image, w_box): # return image filtered with box filter
     box = np.ones((w_box, w_box))/(w_box**2)
@@ -72,6 +76,7 @@ def box_filter(image, w_box): # return image filtered with box filter
     image = np.fft.irfft2(image_fft*box_fft)
 
     return(image)
+
 
 def download_tile(tile_url, tile_file): # download image from url to file
     request = urllib.request.Request(url = tile_url, data = None, headers = {'User-Agent':'Mozilla/5.0'})
@@ -100,11 +105,54 @@ def download_tile(tile_url, tile_file): # download image from url to file
 
     return(status)
 
+
+def get_lat_lon_from_gpx(gpx_dir, gpx_year='all', gpx_glob='.gpx'):
+    lat_lon_data = []
+    # find GPX files
+    gpx_files = glob.glob(gpx_dir+'/'+gpx_glob)
+
+    if not gpx_files:
+        print('WARNING no data matching '+gpx_dir+'/'+gpx_glob)
+
+    # read GPX files
+    lat_lon_data = [] # initialize latitude, longitude list
+
+    for i in range(len(gpx_files)):
+        print('reading GPX file '+str(i+1)+'/'+str(len(gpx_files))+'...')
+
+        with open(gpx_files[i], encoding='utf-8') as file:
+            for line in file:
+                if '<time' in line: # activity date
+                    tmp = re.findall('[0-9]{4}', line)
+                    if gpx_year in [tmp[0], 'all']:
+                        for line in file:
+                            if '<trkpt' in line: # trackpoint latitude, longitude
+                                tmp = re.findall('-?[0-9]*[.]?[0-9]+', line)
+                                lat_lon_data.append([float(tmp[0]), float(tmp[1])])
+                    else:
+                        break
+    return lat_lon_data, len(gpx_files)
+
+
+def get_lat_lon_from_fit(fit_dir, fit_year, fit_glob):
+    lat_lon_data = []
+    # find FIT files
+    fit_files = glob.glob(fit_dir + '/' + fit_glob)
+
+    if not fit_files:
+        print('WARNING no data matching ' +fit_dir + '/' + fit_glob)
+
+    return lat_lon_data, len(fit_files)
+
+
 def main(args):
     # parameters
     gpx_dir = args.dir # string
     gpx_glob = args.glob # string
     gpx_year = args.year # string
+    fit_dir = args.fit_dir
+    fit_glob = args.fit_glob
+    fit_year = args.fit_year
     lat_bound_min, lat_bound_max, lon_bound_min, lon_bound_max = args.bound # int
     heatmap_file = args.file # string
     heatmap_zoom = args.zoom # int
@@ -122,39 +170,25 @@ def main(args):
         print('ERROR colormap '+PLT_COLORMAP+' does not exists')
         quit()
 
-    # find GPX files
-    gpx_files = glob.glob(gpx_dir+'/'+gpx_glob)
-
-    if not gpx_files:
-        print('ERROR no data matching '+gpx_dir+'/'+gpx_glob)
-        quit()
 
     # read GPX files
     lat_lon_data = [] # initialize latitude, longitude list
 
-    for i in range(len(gpx_files)):
-        print('reading GPX file '+str(i+1)+'/'+str(len(gpx_files))+'...')
+    # Extract lat lon from GPX file
+    gpx_lat_lon, nr_gpx_files = get_lat_lon_from_gpx(gpx_dir, gpx_year, gpx_glob)
 
-        with open(gpx_files[i], encoding='utf-8') as file:
-            for line in file:
-                if '<time' in line: # activity date
-                    tmp = re.findall('[0-9]{4}', line)
+    # Extract lat lon from FIT files
+    fit_lat_lon, nr_fit_files = get_lat_lon_from_fit(fit_dir, fit_year, fit_glob)
 
-                    if gpx_year in [tmp[0], 'all']:
-                        for line in file:
-                            if '<trkpt' in line: # trackpoint latitude, longitude
-                                tmp = re.findall('-?[0-9]*[.]?[0-9]+', line)
-
-                                lat_lon_data.append([float(tmp[0]), float(tmp[1])])
-
-                    else:
-                        break
+    nr_activities = nr_gpx_files + nr_fit_files
+    lat_lon_data.extend(gpx_lat_lon)
+    lat_lon_data.extend(fit_lat_lon)
 
     if not lat_lon_data:
         print('ERROR no data matching '+gpx_dir+'/'+gpx_glob+' with --gpx-year '+gpx_year)
         quit()
 
-    print('processing GPX data...')
+    print('processing data...')
 
     lat_lon_data = np.array(lat_lon_data) # convert list to NumPy array
 
@@ -244,7 +278,7 @@ def main(args):
     if use_cumululative_distribution:
         pixel_res = 156543.03*np.cos(np.radians(np.mean(lat_lon_data[:, 0])))/(2**heatmap_zoom) # pixel resolution (from https://wiki.openstreetmap.org/wiki/Slippy_map_tilenames)
 
-        m = (1.0/5.0)*pixel_res*len(gpx_files) # trackpoints max accumulation per pixel = 1/5 (trackpoints/meters) * pixel_res (meters/pixel) per activity (Strava records trackpoints every 5 meters in average for cycling activites)
+        m = (1.0/5.0)*pixel_res*nr_activities # trackpoints max accumulation per pixel = 1/5 (trackpoints/meters) * pixel_res (meters/pixel) per activity (Strava records trackpoints every 5 meters in average for cycling activites)
 
     else:
         m = 1.0
@@ -309,6 +343,10 @@ if __name__ == '__main__':
     parser.add_argument('--gpx-year', dest = 'year', default = 'all', help = 'GPX files year filter (default: all)')
     parser.add_argument('--gpx-filter', dest = 'glob', default = '*.gpx', help = 'GPX files glob filter (default: *.gpx)')
     parser.add_argument('--gpx-bound', dest = 'bound', type = float, nargs = 4, default = [-90, +90, -180, +180], help = 'heatmap bounding box coordinates as lat_min, lat_max, lon_min, lon_max (default: -90 +90 -180 +180)')
+    parser.add_argument('--fit-dir', dest='fit_dir', default='fit', help='FIT files directory (default: fit)')
+    parser.add_argument('--fit-year', dest='fit_year', default='all', help='FIT files year filter (default: all)')
+    parser.add_argument('--fit-filter', dest='fit_glob', default='*.fit.gz', help='FIT files glob filter (default: *.fit.gz (as in the Strava exports)')
+    parser.add_argument('--fit-bound', dest='fit_bound', type=float, nargs=4, default=[-90, +90, -180, +180], help='heatmap bounding box coordinates as lat_min, lat_max, lon_min, lon_max (default: -90 +90 -180 +180)')
     parser.add_argument('--output', dest = 'file', default = 'heatmap.png', help = 'heatmap name (default: heatmap.png)')
     parser.add_argument('--zoom', dest = 'zoom', type = int, default = 10, help = 'heatmap zoom level 0-19 (default: 10)')
     parser.add_argument('--sigma', dest = 'sigma', type = int, default = 1, help = 'heatmap Gaussian kernel sigma in pixels (default: 1)')
